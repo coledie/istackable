@@ -1,0 +1,26 @@
+{
+  "ui": {
+    "showHand": true,
+    "showDebugInfo": false,
+    "showRecipeHints": true,
+    "handPosition": "bottom",
+    "handSize": "normal"
+  },
+  "animations": {
+    "enableCardHover": true,
+    "enablePickupAnimation": true,
+    "enableDragAnimation": true,
+    "animationSpeed": 1.0
+  },
+  "gameplay": {
+    "enableAutoRecipes": true,
+    "enableCardStacking": true,
+    "showCardTypes": true
+  },
+  "visual": {
+    "theme": "mtg",
+    "cardBorders": true,
+    "playmatBorders": true,
+    "shadowEffects": false
+  }
+}
