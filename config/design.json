@@ -15,7 +15,8 @@
   "gameplay": {
     "enableAutoRecipes": true,
     "enableCardStacking": true,
-    "showCardTypes": true
+    "showCardTypes": true,
+    "maxStackSize": 30
   },
   "visual": {
     "theme": "mtg",

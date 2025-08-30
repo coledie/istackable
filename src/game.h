@@ -32,6 +32,13 @@ private:
     Vector2 dragOffset;    // Offset from card position to mouse when drag started
     bool isDragging;
     
+    // Stacking state
+    bool isOverStackTarget;     // True if currently dragged card is overlapping a stack target > threshold
+    int stackTargetIndex;       // Index of the card being hovered as stack target
+    float stackOverlapThreshold; // Fraction (0-1) of overlap required to snap/stack (default 0.5)
+    float stackVisualOffsetY;   // Vertical offset per stacked card when rendering (visual)
+    float stackVisualOffsetX;   // Horizontal offset per stacked card when rendering (visual, to the right)
+    
     // Hand drag state
     Card* draggingHandCard;    // Hand card being dragged
     Vector2 handCardOriginalPos; // Original position to return to if cancelled
@@ -83,6 +90,11 @@ private:
     void updateHandHover(Vector2 mousePos);
     void renderHand(SDL_Renderer* renderer);
     void playCardFromHand(Card* handCard, Vector2 position);
+
+    // Stacking helpers
+    int getStackCountAtBasePosition(const Vector2& basePos) const;
+    int findOverlapTargetIndex(const Card* sourceCard, float requiredFraction) const;
+    void finalizeStacking(int targetIndex, int sourceIndex);
     
     // Color management
     const ColorManager& getColorManager() const { return colorManager; }

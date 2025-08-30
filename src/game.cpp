@@ -6,6 +6,7 @@ Game::Game() : window(nullptr), renderer(nullptr), running(false),
                animatingCard(nullptr), animationTimer(0.0f), animationDuration(0.3f),
                lastClickPos(Vector2(0, 0)), lastClickedCard(nullptr),
                draggingCard(nullptr), dragOffset(Vector2(0, 0)), isDragging(false),
+               isOverStackTarget(false), stackTargetIndex(-1), stackOverlapThreshold(0.5f), stackVisualOffsetY(8.0f), stackVisualOffsetX(6.0f),
                draggingHandCard(nullptr), handCardOriginalPos(Vector2(0, 0)), isDraggingFromHand(false),
                hoveredHandCard(nullptr), handCardScale(1.0f), handArea(Vector2(480, 1014)), 
                handCardSpacing(120.0f) {}
@@ -72,6 +73,12 @@ void Game::handleEvents() {
     while (SDL_PollEvent(&e)) {
         if (e.type == SDL_EVENT_QUIT) {
             running = false;
+        }
+        else if (e.type == SDL_EVENT_KEY_DOWN) {
+            // Close the game when Escape is pressed
+            if (e.key.scancode == SDL_SCANCODE_ESCAPE) {
+                running = false;
+            }
         }
         else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
             if (e.button.button == SDL_BUTTON_LEFT) {
@@ -325,7 +332,7 @@ void Game::renderDebugInfo(SDL_Renderer* renderer) {
     // Highlight the currently dragging card with a border
     if (draggingCard) {
         Color dragColor = colorManager.getDragBorder();
-        SDL_SetRenderDrawColor(renderer, dragColor.r, dragColor.g, dragColor.b, dragColor.a);
+        SDL_SetRenderDrawColor(renderer, dragColor.r, dragColor.g, dragColor.a);
         Vector2 pos = draggingCard->getPosition();
         Vector2 size = draggingCard->getSize();
         float offset = draggingCard->getAnimationOffset();
@@ -359,6 +366,10 @@ void Game::startDrag(Card* card, Vector2 mousePos) {
     card->setState(CardState::DRAGGING);
     card->setAnimationOffset(20.0f); // Lift the card up
     
+    // Reset stacking state while starting drag
+    isOverStackTarget = false;
+    stackTargetIndex = -1;
+    
     DEBUG_DRAG("Drag started with offset: (%.1f, %.1f)\n", dragOffset.x, dragOffset.y);
 }
 
@@ -367,6 +378,32 @@ void Game::updateDrag(Vector2 mousePos) {
         // Calculate new position: mouse position minus the drag offset
         Vector2 newPos = Vector2(mousePos.x - dragOffset.x, mousePos.y - dragOffset.y);
         draggingCard->setPosition(newPos);
+
+        // If stacking is enabled, check if we're overlapping another card enough to snap/stack
+        if (designManager.getEnableCardStacking()) {
+            int targetIdx = findOverlapTargetIndex(draggingCard, stackOverlapThreshold);
+            if (targetIdx != -1) {
+                // Check stack size limit
+                Vector2 targetBase = cards[targetIdx].getBasePosition();
+                int currentStack = getStackCountAtBasePosition(targetBase);
+                if (currentStack < designManager.getMaxStackSize()) {
+                    isOverStackTarget = true;
+                    stackTargetIndex = targetIdx;
+
+                    // Snap visually to top of stack (downwards and to the right)
+                    int snapIndex = currentStack; // new card will be the topmost (0-based)
+                    Vector2 snapPos = Vector2(targetBase.x + (snapIndex * stackVisualOffsetX), targetBase.y + (snapIndex * stackVisualOffsetY));
+                    draggingCard->setPosition(snapPos);
+                } else {
+                    // Stack full - do not snap
+                    isOverStackTarget = false;
+                    stackTargetIndex = -1;
+                }
+            } else {
+                isOverStackTarget = false;
+                stackTargetIndex = -1;
+            }
+        }
     }
 }
 
@@ -378,10 +415,24 @@ void Game::stopDrag() {
         
         DEBUG_DRAG("Drag stopped for card type: %d\n", (int)draggingCard->getType());
         
+        // If we were snapping to a stack target, finalize the stacking
+        if (isOverStackTarget && stackTargetIndex != -1 && designManager.getEnableCardStacking()) {
+            // Find source index of draggingCard in the vector
+            int sourceIndex = -1;
+            for (int i = 0; i < cards.size(); i++) {
+                if (&cards[i] == draggingCard) { sourceIndex = i; break; }
+            }
+            if (sourceIndex != -1) {
+                finalizeStacking(stackTargetIndex, sourceIndex);
+            }
+        }
+        
         // Clear drag state
         draggingCard = nullptr;
         isDragging = false;
         dragOffset = Vector2(0, 0);
+        isOverStackTarget = false;
+        stackTargetIndex = -1;
     }
 }
 
@@ -406,14 +457,6 @@ void Game::startHandCardDrag(Card* handCard, Vector2 mousePos) {
     DEBUG_DRAG("Hand card drag started with offset: (%.1f, %.1f)\n", dragOffset.x, dragOffset.y);
 }
 
-void Game::updateHandCardDrag(Vector2 mousePos) {
-    if (draggingHandCard && isDraggingFromHand) {
-        // Calculate new position: mouse position minus the drag offset
-        Vector2 newPos = Vector2(mousePos.x - dragOffset.x, mousePos.y - dragOffset.y);
-        draggingHandCard->setPosition(newPos);
-    }
-}
-
 void Game::stopHandCardDrag() {
     if (draggingHandCard && isDraggingFromHand) {
         float mouseX, mouseY;
@@ -423,9 +466,18 @@ void Game::stopHandCardDrag() {
         if (isOverPlaymat(currentMousePos)) {
             // Drop on playmat - create new card and reset hand card position
             Vector2 dropPos = draggingHandCard->getPosition();
-            playCardFromHand(draggingHandCard, dropPos);
-            
-            DEBUG_DRAG("Hand card dropped on playmat at (%.1f, %.1f)\n", dropPos.x, dropPos.y);
+
+            if (isOverStackTarget && stackTargetIndex != -1 && designManager.getEnableCardStacking()) {
+                // If stacking target exists, and under limit, create new card and finalize stacking
+                // Create the new card at dropPos and append to cards
+                cards.push_back(Card(draggingHandCard->getType(), dropPos));
+                int sourceIndex = (int)cards.size() - 1;
+                finalizeStacking(stackTargetIndex, sourceIndex);
+                DEBUG_DRAG("Hand card stacked on existing stack at index %d\n", stackTargetIndex);
+            } else {
+                playCardFromHand(draggingHandCard, dropPos);
+                DEBUG_DRAG("Hand card dropped on playmat at (%.1f, %.1f)\n", dropPos.x, dropPos.y);
+            }
         } else {
             DEBUG_DRAG("Hand card drag cancelled - returning to hand\n");
         }
@@ -439,6 +491,8 @@ void Game::stopHandCardDrag() {
         draggingHandCard = nullptr;
         isDraggingFromHand = false;
         dragOffset = Vector2(0, 0);
+        isOverStackTarget = false;
+        stackTargetIndex = -1;
     }
 }
 
@@ -510,4 +564,133 @@ void Game::playCardFromHand(Card* handCard, Vector2 position) {
     // For now, we keep the hand card as an infinite source
     
     DEBUG_PRINT("Played card type %d from hand to playmat\n", (int)handCard->getType());
+}
+
+// Stacking helper implementations
+int Game::getStackCountAtBasePosition(const Vector2& basePos) const {
+    int count = 0;
+    const float epsilon = 0.1f;
+    for (const auto& c : cards) {
+        Vector2 bp = c.getBasePosition();
+        if (fabs(bp.x - basePos.x) < epsilon && fabs(bp.y - basePos.y) < epsilon) {
+            count++;
+        }
+    }
+    return count;
+}
+
+int Game::findOverlapTargetIndex(const Card* sourceCard, float requiredFraction) const {
+    if (!sourceCard) return -1;
+
+    Vector2 sPos = sourceCard->getPosition();
+    Vector2 sSize = sourceCard->getSize();
+    float sLeft = sPos.x, sTop = sPos.y, sRight = sPos.x + sSize.x, sBottom = sPos.y + sSize.y;
+
+    // Search from topmost to bottom so we pick the visible top card first
+    for (int i = (int)cards.size() - 1; i >= 0; i--) {
+        const Card& target = cards[i];
+        // If sourceCard is actually this same card (by address), skip
+        if (&target == sourceCard) continue;
+
+        Vector2 tPos = target.getPosition();
+        Vector2 tSize = target.getSize();
+        float tLeft = tPos.x, tTop = tPos.y, tRight = tPos.x + tSize.x, tBottom = tPos.y + tSize.y;
+
+        float interLeft = fmax(sLeft, tLeft);
+        float interTop = fmax(sTop, tTop);
+        float interRight = fmin(sRight, tRight);
+        float interBottom = fmin(sBottom, tBottom);
+
+        float interW = interRight - interLeft;
+        float interH = interBottom - interTop;
+
+        if (interW > 0 && interH > 0) {
+            float interArea = interW * interH;
+            float targetArea = tSize.x * tSize.y;
+            float fraction = interArea / targetArea;
+            if (fraction >= requiredFraction) {
+                return i;
+            }
+        }
+    }
+    return -1;
+}
+
+void Game::finalizeStacking(int targetIndex, int sourceIndex) {
+    if (targetIndex < 0 || sourceIndex < 0 || targetIndex >= (int)cards.size() || sourceIndex >= (int)cards.size()) return;
+    if (targetIndex == sourceIndex) return;
+
+    // Determine the base position of the target stack
+    Vector2 targetBase = cards[targetIndex].getBasePosition();
+
+    // Count current cards in the stack
+    int currentStack = getStackCountAtBasePosition(targetBase);
+    if (currentStack >= designManager.getMaxStackSize()) {
+        return; // Stack is full
+    }
+
+    // Extract the source card
+    Card temp = cards[sourceIndex];
+
+    // Remove the source card from the vector
+    cards.erase(cards.begin() + sourceIndex);
+
+    // If removing an element before the target, the target index shifts left by 1
+    if (sourceIndex < targetIndex) targetIndex -= 1;
+
+    // Anchor the source card's base position to the target base
+    temp.setBasePosition(targetBase);
+
+    // Append the card to the end so it becomes topmost
+    cards.push_back(temp);
+
+    // Recalculate stack ordering and visual offsets for all cards sharing the same base position
+    std::vector<int> stackIndices;
+    const float epsilon = 0.1f;
+    for (int i = 0; i < (int)cards.size(); i++) {
+        Vector2 bp = cards[i].getBasePosition();
+        if (fabs(bp.x - targetBase.x) < epsilon && fabs(bp.y - targetBase.y) < epsilon) {
+            stackIndices.push_back(i);
+            // Ensure the base position is consistent
+            cards[i].setBasePosition(targetBase);
+        }
+    }
+
+    // Apply visual offsets based on stack order (bottom -> top)
+    for (int k = 0; k < (int)stackIndices.size(); k++) {
+        int idx = stackIndices[k];
+        Vector2 pos = Vector2(targetBase.x + (k * stackVisualOffsetX), targetBase.y + (k * stackVisualOffsetY));
+        cards[idx].setPosition(pos);
+    }
+}
+
+void Game::updateHandCardDrag(Vector2 mousePos) {
+    if (draggingHandCard && isDraggingFromHand) {
+        // Calculate new position: mouse position minus the drag offset
+        Vector2 newPos = Vector2(mousePos.x - dragOffset.x, mousePos.y - dragOffset.y);
+        draggingHandCard->setPosition(newPos);
+
+        // While dragging from hand, check for stack snap targets as well
+        if (designManager.getEnableCardStacking()) {
+            // Create a temporary card at the hand card position to test overlaps
+            Card temp(draggingHandCard->getType(), draggingHandCard->getPosition());
+            int targetIdx = findOverlapTargetIndex(&temp, stackOverlapThreshold);
+            if (targetIdx != -1) {
+                Vector2 targetBase = cards[targetIdx].getBasePosition();
+                int currentStack = getStackCountAtBasePosition(targetBase);
+                if (currentStack < designManager.getMaxStackSize()) {
+                    isOverStackTarget = true;
+                    stackTargetIndex = targetIdx;
+                    Vector2 snapPos = Vector2(targetBase.x + (currentStack * stackVisualOffsetX), targetBase.y + (currentStack * stackVisualOffsetY));
+                    draggingHandCard->setPosition(snapPos);
+                } else {
+                    isOverStackTarget = false;
+                    stackTargetIndex = -1;
+                }
+            } else {
+                isOverStackTarget = false;
+                stackTargetIndex = -1;
+            }
+        }
+    }
 }

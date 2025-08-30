@@ -24,7 +24,7 @@ public:
     
     Vector2 getPosition() const { return position; }
     Vector2 getBasePosition() const { return basePosition; }
-    void setPosition(Vector2 pos) { position = pos; basePosition = pos; }
+    void setPosition(Vector2 pos) { position = pos; } // Only update current position; do not change basePosition (used for stacking)
     void setBasePosition(Vector2 pos) { basePosition = pos; }
     Vector2 getSize() const { return size; }
     CardType getType() const { return type; }

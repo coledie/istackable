@@ -26,6 +26,7 @@ void DesignManager::loadDefaultSettings() {
     boolSettings["gameplay.enableAutoRecipes"] = false;
     boolSettings["gameplay.enableCardStacking"] = true;
     boolSettings["gameplay.showCardTypes"] = true;
+    floatSettings["gameplay.maxStackSize"] = 30.0f; // Maximum number of cards allowed in a stack by default
     
     // Default Visual Settings
     stringSettings["visual.theme"] = "mtg";

@@ -34,6 +34,7 @@ public:
     bool getEnableAutoRecipes() const { return getBool("gameplay.enableAutoRecipes"); }
     bool getEnableCardStacking() const { return getBool("gameplay.enableCardStacking"); }
     bool getShowCardTypes() const { return getBool("gameplay.showCardTypes"); }
+    int getMaxStackSize() const { return static_cast<int>(getFloat("gameplay.maxStackSize")); }
     
     // Visual Settings
     std::string getTheme() const { return getString("visual.theme"); }
